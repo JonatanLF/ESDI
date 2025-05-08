@@ -1,0 +1,154 @@
+/* 
+* File:   main.c
+* Author: jonatan
+*
+* Created on January 28, 2025, 11:13 AM
+*
+* USART2 RX: Pinne PF5
+* USART3 TX: Pinne PB0
+* USART3 RX: Pinne PB1
+* USART2 TX: Pinne PF4
+*/
+#define F_CPU 4000000UL
+#define USART_BAUD_RATE(BAUD_RATE) ((float)(F_CPU * 64 / (16 *(float)BAUD_RATE)) + 0.5)
+#define COMMON_BAUD_RATE 9600
+
+#include <avr/io.h>
+#include <util/delay.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+char tx_char;
+char rx_char = 0;
+
+// Prototypes
+
+void USART2_init(unsigned long baud);
+void USART3_init(unsigned long baud);
+void USART3_sendChar(char c);
+static int USART3_printChar(char c, FILE *stream);
+
+void BFR();
+void flush();
+
+uint8_t USART2_read();
+
+static FILE USART_stream = FDEV_SETUP_STREAM(USART3_printChar, NULL, _FDEV_SETUP_WRITE);
+
+int main(void) {
+    
+    stdout = &USART_stream;
+    
+    USART2_init(COMMON_BAUD_RATE);
+    USART3_init(COMMON_BAUD_RATE);
+    
+    srand(time(NULL));
+    
+    int j = 0;
+    
+    while (j < 1000) { //Amount of bits sent before program ends, can be made to run indefinitely
+        int i = rand() % 2;
+        tx_char = i + '0';
+        
+        flush();
+        
+        USART3_sendChar(tx_char);
+        rx_char = USART2_read();
+        
+        if (rx_char == tx_char) {
+            printf(" TX OK\r\n");
+        } else {
+            printf(" TX BAD\r\n");
+        }
+        
+        BFR();
+        j++;
+        
+        _delay_ms(10);
+    }
+}
+
+void USART2_init(unsigned long baud)
+{
+    PORTF.DIRSET = PIN4_bm; //TX-pin as output
+    PORTF.DIRCLR = PIN5_bm; //RX-pin as input
+    
+    USART2.BAUD = (uint16_t)USART_BAUD_RATE(baud);
+    USART2.CTRLB |= USART_TXEN_bm | USART_RXEN_bm;
+    
+    //PORTMUX in order to get the correct pins on AVR
+    PORTMUX.USARTROUTEA |= PORTMUX_USART2_ALT1_gc;
+}
+
+// Function to read received char
+uint8_t USART2_read()
+{           
+    while (!(USART2.STATUS & USART_RXCIF_bm))
+    { 
+        _delay_ms(10);
+        if(USART2.STATUS & USART_RXCIF_bm)
+        {
+        ;
+        }
+        else{
+            break;
+        }
+    }
+    
+    uint8_t src = USART2.RXDATAL;
+    return src;
+}
+
+void USART3_init(unsigned long baud)
+{
+    PORTB.DIRSET = PIN0_bm; //TX-pin as output
+    PORTB.DIRCLR = PIN1_bm; //RX-pin as input
+    
+    USART3.BAUD = (uint16_t)USART_BAUD_RATE(baud);
+    USART3.CTRLB |= USART_TXEN_bm | USART_RXEN_bm;
+}
+
+void USART3_sendChar(char c)
+{
+    while (!(USART3.STATUS & USART_DREIF_bm)) //wait while USART3 Data Register not empty
+    {
+    ;
+    }
+    
+    USART3.TXDATAL = c; // Send c
+}
+
+static int USART3_printChar(char c, FILE *stream)
+{
+    USART3_sendChar(c);
+    return 0;
+}
+
+void flush()
+{
+    while(USART2.STATUS & USART_RXCIF_bm){
+        volatile uint8_t flushVar = USART2.RXDATAL;
+    }
+}
+
+void BFR()
+{
+    static uint16_t charNum = 0;
+    static uint16_t bitError = 0;
+    static double bitErrorRatio;
+    
+    uint8_t temp1 = tx_char ^ rx_char;
+    
+    for(int i = 0; i < 8; i++){
+        if((temp1 / 128) >= 1){
+            bitError++;  
+        }
+        temp1 = temp1 << 1;
+    }
+    
+    charNum++;
+    bitErrorRatio = (float)bitError / (float)(8 * charNum);
+    printf("%f\r\n", bitErrorRatio);
+}
